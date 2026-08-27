@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/jacobaraujo7/remote_pi/main/branding/logo-full.svg" width="160" alt="Remote Pi logo" />
+  <img src="https://raw.githubusercontent.com/hknet/remote-pi/main/branding/logo-full.svg" width="160" alt="Remote Pi logo" />
 </p>
 
 <h1 align="center">Remote Pi</h1>
@@ -8,7 +8,9 @@
 > superpowers: agents that talk to each other on the same machine, and a mobile
 > app that drives Pi from your phone.
 
-**Homepage:** <https://remote-pi.jacobmoura.work>
+**Repository:** <https://github.com/hknet/remote-pi>
+
+**Project website:** <https://remote-pi.jacobmoura.work>
 
 `/remote-pi` is a single slash command that wires both at once. Run it; the
 first time it asks a couple of questions and you are done.
@@ -27,7 +29,7 @@ document — this README only covers user-facing setup.
 Install the extension (one-time):
 
 ```bash
-pi install npm:remote-pi
+pi install npm:@hk_net/remote-pi
 ```
 
 Then in any Pi terminal:
@@ -171,10 +173,14 @@ messages are unaffected.
 
 ## Install
 
-Requirements: Node 20+, Pi (the host coding agent).
+Requirements: Node 22.19+, Pi 0.84.3+ (the host coding agent).
+
+Remote Pi's Pi extension uses Pi's SDK, TUI, and `typebox` as optional peer
+dependencies, so it runs against the host Pi release instead of shipping a
+second, stale copy. Keep Pi current with `pi update`.
 
 ```bash
-pi install npm:remote-pi
+pi install npm:@hk_net/remote-pi
 ```
 
 The extension self-registers the `/remote-pi` slash command and deploys an
@@ -249,6 +255,17 @@ To remove one:
 
 The shortid is the first 8 chars shown by `devices`.
 
+### Pair-code privacy
+
+The QR URI contains a single-use, expiring pairing token. `/remote-pi pair`
+keeps its `remote-pi:pair-code` custom message in Pi's session stream so
+Cockpit can render the structured QR payload, but removes that exact message
+from provider and compaction contexts. This is deliberately narrow: it does
+not generally filter user-visible `remote-pi:*` messages from model context.
+
+**Credit:** Context-isolation fix contributed by **Harald Kapper**
+(<hk@kapper.net>) of [KAPPER NETWORK-COMMUNICATIONS GmbH](https://kapper.net).
+
 ---
 
 ## The relay
@@ -260,20 +277,20 @@ forwarding, the Relay currently permits a route when any correctly signed Owner
 blob lists both canonical Pi keys. That does not prove the Owner paired with or
 controls either Pi.
 
-### Upgrade order (Relay 0.3 first, then Extension 0.6)
+### Upgrade order (Relay first, then Extension/MCP participants)
 
-Upgrade the **Relay to 0.3 first**: an old Extension can consume the new
-Relay's UUID errors. Extension 0.6 carries a one-release legacy wire-label
-shim, so mixed new/old Extensions interoperate when both select the same unique
-colon-free signed nickname label, or when neither has one and both use the
-canonical standard-padded key prefix. Delimiter or collision cases, like
-divergent nickname views, are unsupported and may be silently dropped by the
-old receiver. Upgrade all Extension/MCP participants in one maintenance window.
+Upgrade the **Relay first**: an old Extension can consume the new Relay's UUID
+errors. Current releases retain a narrow legacy wire-label shim, so mixed
+new/old Extensions interoperate when both select the same unique colon-free
+signed nickname label, or when neither has one and both use the canonical
+standard-padded key prefix. Delimiter or collision cases, like divergent
+nickname views, are unsupported and may be silently dropped by the old
+receiver. Upgrade all Extension/MCP participants in one maintenance window.
 The shim does not replace the receiver-local aliases returned by `list_peers`;
 addresses remain opaque.
 
-Extension 0.6 accepts an old Relay's lowercase 32-hex trusted error ID only as
-a narrow shim for an old Relay or Relay rollback; that shim is not why
+Current Extensions accept an old Relay's lowercase 32-hex trusted error ID only
+as a narrow shim for an old Relay or Relay rollback; that shim is not why
 Relay-first is safe.
 
 You have two options:
@@ -299,7 +316,7 @@ keypair authentication, layering a VPN on top means **only your devices** can
 even reach the WebSocket port — defense in depth.
 
 Quick Docker outline (see the
-[relay README](https://github.com/jacobaraujo7/remote_pi/blob/main/relay/README.md#self-hosted-relay-recommended-for-privacy)
+[relay README](https://github.com/hknet/remote-pi/blob/main/relay/README.md#self-hosted-relay-recommended-for-privacy)
 for the full setup, environment variables, and reverse-proxy guidance):
 
 ```bash
@@ -404,6 +421,19 @@ Name collisions inside a session get a numeric suffix automatically
 (`backend`, `backend#2`, `backend#3`). The broker assigns it and returns the
 real name to the peer.
 
+### Claude Code mesh launcher
+
+When the package is globally installed, `remote-pi claude [cwd] [claude-flags…]`
+starts a Claude Code session connected to the same agent mesh. It supplies a
+temporary MCP configuration for the Remote Pi mesh server and injects the
+agent-network protocol for that one session; it does not persist an MCP entry,
+so a normal `claude` launch is unaffected.
+
+It forwards any trailing Claude flags (for example `--resume` or `-c`). The
+launcher currently passes Claude's `--dangerously-skip-permissions` flag and
+enables the local development channel used for immediate mesh-message wakeups.
+Use it only in a workspace where automatic tool approval is appropriate.
+
 ---
 
 ## Command reference
@@ -414,7 +444,7 @@ real name to the peer.
 |---|---|
 | `/remote-pi` | Connect (join local mesh + start relay), or run setup on first use |
 | `/remote-pi setup` | Run the setup wizard and update local config |
-| `/remote-pi status` | Show local mesh + relay status |
+| `/remote-pi status` | Show installed package identity, local mesh + relay status |
 | `/remote-pi stop` | Stop everything for **this** terminal (mesh + relay) |
 | `/remote-pi pair` | Show QR code + copy-paste pairing URI for a new mobile device |
 | `/remote-pi devices` | List paired mobile devices (online/offline per device) |
@@ -447,7 +477,9 @@ real name to the peer.
 
 All commands above work both as Pi slash commands (interactive) and as
 shell-level `remote-pi <subcommand>` when the package is installed
-globally (`npm install -g remote-pi`).
+globally (`npm install -g @hk_net/remote-pi`). The global CLI itself is standalone;
+Pi-facing operations such as daemons use the installed Pi runtime's peer
+libraries.
 
 ### Scheduled prompts (`cron`)
 
@@ -502,10 +534,10 @@ See [`docs/daemon.md`](./docs/daemon.md) for troubleshooting.
 
 ```bash
 # Install the package globally so `remote-pi` and `pi-supervisord`
-# are on your PATH (`pi install npm:remote-pi` alone makes the Pi
+# are on your PATH (`pi install npm:@hk_net/remote-pi` alone makes the Pi
 # extension available but does NOT expose the CLI binaries — see
 # https://docs.npmjs.com/cli/v10/configuring-npm/package-json#bin).
-npm install -g remote-pi
+npm install -g @hk_net/remote-pi
 
 # Install the supervisor as a user-level system service. Linux uses
 # systemd --user; macOS uses launchd LaunchAgent. Both auto-start at
@@ -635,24 +667,24 @@ other terminal first.
 ## Branding
 
 Official brand assets live in
-[`/branding`](https://github.com/jacobaraujo7/remote_pi/tree/main/branding) —
+[`/branding`](https://github.com/hknet/remote-pi/tree/main/branding) —
 SVG sources for the logo (full, foreground, background, monochrome) plus a
 banner. See the
-[branding README](https://github.com/jacobaraujo7/remote_pi/blob/main/branding/README.md)
+[branding README](https://github.com/hknet/remote-pi/blob/main/branding/README.md)
 for palette and export sizes.
 
 <table>
   <tr>
     <td align="center">
-      <img src="https://raw.githubusercontent.com/jacobaraujo7/remote_pi/main/branding/logo-full.svg" width="96" alt="logo-full" /><br/>
+      <img src="https://raw.githubusercontent.com/hknet/remote-pi/main/branding/logo-full.svg" width="96" alt="logo-full" /><br/>
       <sub><code>logo-full</code></sub>
     </td>
     <td align="center">
-      <img src="https://raw.githubusercontent.com/jacobaraujo7/remote_pi/main/branding/logo-foreground.svg" width="96" alt="logo-foreground" /><br/>
+      <img src="https://raw.githubusercontent.com/hknet/remote-pi/main/branding/logo-foreground.svg" width="96" alt="logo-foreground" /><br/>
       <sub><code>logo-foreground</code></sub>
     </td>
     <td align="center">
-      <img src="https://raw.githubusercontent.com/jacobaraujo7/remote_pi/main/branding/logo-monochrome.svg" width="96" alt="logo-monochrome" /><br/>
+      <img src="https://raw.githubusercontent.com/hknet/remote-pi/main/branding/logo-monochrome.svg" width="96" alt="logo-monochrome" /><br/>
       <sub><code>logo-monochrome</code></sub>
     </td>
   </tr>
@@ -663,10 +695,10 @@ for palette and export sizes.
 ## Links
 
 - Homepage: <https://remote-pi.jacobmoura.work>
-- Source: <https://github.com/jacobaraujo7/remote_pi>
+- Source: <https://github.com/hknet/remote-pi>
 - Pi coding agent: <https://github.com/earendil-works/pi>
-- Relay (self-hosting guide): <https://github.com/jacobaraujo7/remote_pi/blob/main/relay/README.md>
-- Issues / bugs: <https://github.com/jacobaraujo7/remote_pi/issues>
+- Relay (self-hosting guide): <https://github.com/hknet/remote-pi/blob/main/relay/README.md>
+- Issues / bugs: <https://github.com/hknet/remote-pi/issues>
 
 ---
 
