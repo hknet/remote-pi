@@ -160,9 +160,9 @@ export default function DocsPage() {
 
       <DocsSection id="install" title="Install">
         <p>
-          Requirements: Node 20+ and Pi (the host coding agent). Remote Pi
-          installs as a Pi plugin with{" "}
-          <InlineCode>pi install npm:remote-pi</InlineCode>, which self-registers
+          Requirements: Node 22.19+ and Pi 0.84.3+ (the host coding agent).
+          Remote Pi installs as a Pi plugin with{" "}
+          <InlineCode>pi install npm:@hk_net/remote-pi</InlineCode>, which self-registers
           the <InlineCode>/remote-pi</InlineCode> slash command and deploys the
           agent-network skill. The complete setup — wizard, pairing, first
           command — is in the tutorial.

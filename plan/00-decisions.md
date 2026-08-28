@@ -22,6 +22,12 @@ Numeração `00-` é proposital: este arquivo carrega antes dos planos numerados
 | **Relay stateless** | Sem persistência. Encaminha ciphertext entre dois peers identificados por pubkey. ~200 linhas de Rust |
 | **Relay open-source + self-hostável** | Compromisso de credibilidade. Usuário paranoico roda o próprio. Não vira ponto único de comprometimento |
 
+## Instalação / supply-chain (fechado 2026-08-27)
+
+| Decisão | Razão / nota |
+|---|---|
+| **Sem bootstrap `curl \| bash`** | Retirar `pi-extension/install.sh`, a cópia pública do site e toda promoção desse fluxo. Executar um script remoto desconhecido como atalho de instalação é postura ruim de supply-chain. Fluxo suportado: instalar Pi pelas instruções oficiais e então `pi install npm:@hk_net/remote-pi`. `/remote-pi install` continua sendo o comando explícito e opcional para o supervisor. |
+
 ## Cockpit — motor de agente (fechado 2026-08-12 — plano 58)
 
 | Decisão | Razão / nota |

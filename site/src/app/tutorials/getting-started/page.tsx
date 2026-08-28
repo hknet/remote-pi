@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { DocsSection, DocsSubsection, InlineCode } from "@/components/docs-shell";
 import { CodeBlock } from "@/components/code-block";
-import { InstallTabs } from "@/components/install-tabs";
 import { Callout } from "@/components/callout";
 import { Pager } from "@/components/pager";
 import { RevealController } from "@/components/landing/reveal-controller";
@@ -35,8 +34,8 @@ export default function GettingStartedTutorial() {
           <p>You need two things:</p>
           <ul className="ml-6 list-disc space-y-2">
             <li>
-              A machine with <strong className="text-fg">Pi</strong> (the coding
-              agent) and <strong className="text-fg">Node 20+</strong> installed.
+              A machine with <strong className="text-fg">Pi 0.84.3+</strong> (the
+              coding agent) and <strong className="text-fg">Node 22.19+</strong> installed.
             </li>
             <li>
               The <strong className="text-fg">Remote Pi</strong> app on your
@@ -66,21 +65,34 @@ export default function GettingStartedTutorial() {
             </li>
           </ul>
           <p className="text-sm">
-            No Pi yet? The <strong className="text-fg">No Pi yet</strong> tab
-            below runs a one-command <InlineCode>curl</InlineCode> installer that
-            sets up Pi, the plugin, and the supervisor for you. Already have Pi?
-            Use the <strong className="text-fg">Already have Pi</strong> path.
+            Install Pi using its{" "}
+            <a
+              className="text-accent underline"
+              href="https://github.com/earendil-works/pi"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              official instructions
+            </a>{" "}
+            before continuing. This guide uses explicit package commands and does
+            not run a bootstrap script that changes your system for you.
           </p>
         </DocsSection>
 
         <DocsSection id="install" title="1. Install the plugin">
           <p>
-            Remote Pi is a Pi plugin. Add it, run the setup wizard, then show a
-            pairing QR:
+            Remote Pi is a Pi plugin. Run the first command in your shell, then
+            run the two <InlineCode>/remote-pi</InlineCode> commands inside Pi:
           </p>
-          <InstallTabs />
+          <CodeBlock
+            code={`pi install npm:@hk_net/remote-pi
+/remote-pi
+/remote-pi pair`}
+            label="Shell, then Pi"
+            language="text"
+          />
           <p>Walking through the three commands:</p>
-          <DocsSubsection title="pi install npm:remote-pi">
+          <DocsSubsection title="pi install npm:@hk_net/remote-pi">
             <p>
               Installs the plugin into Pi. This registers the{" "}
               <InlineCode>/remote-pi</InlineCode> slash command and deploys the

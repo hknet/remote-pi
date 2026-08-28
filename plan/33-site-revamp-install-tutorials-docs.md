@@ -1,4 +1,12 @@
-# Plano 33 — Revamp do Site: install curl, Tutoriais e Doc→Referência
+# Plano 33 — Revamp do Site: instalação, Tutoriais e Doc→Referência
+
+> **Revisão de segurança (2026-08-27):** a decisão das Waves 0/E de distribuir
+> um bootstrap `curl | bash` foi revertida por solicitação explícita do usuário.
+> `pi-extension/install.sh`, `site/public/install.sh`, o sync e a UI de curl
+> devem ser removidos; suas descrições abaixo são históricas. O fluxo suportado
+> agora é instalar Pi pelas instruções oficiais e então
+> `pi install npm:@hk_net/remote-pi`. `/remote-pi install` continua sendo o
+> comando explícito e opcional do supervisor.
 
 **Objetivo**: enxugar a home (hoje inchada com 2–3 walkthroughs de install) e a
 doc (página única de 1273 linhas), reposicionando Remote Pi como **plugin do Pi**
