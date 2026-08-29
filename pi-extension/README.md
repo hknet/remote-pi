@@ -173,7 +173,9 @@ messages are unaffected.
 
 ## Install
 
-Requirements: Node 22.19+, Pi 0.84.3+ (the host coding agent).
+Requirements: Node 22.19+, Pi 0.84.4+ (the host coding agent). Pi 0.84.4 fixes
+extension-message ordering, preventing asynchronous relay and mesh events from
+corrupting provider replay history during tool execution.
 
 Remote Pi's Pi extension uses Pi's SDK, TUI, and `typebox` as optional peer
 dependencies, so it runs against the host Pi release instead of shipping a
