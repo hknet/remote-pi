@@ -64,13 +64,6 @@ const EXTRAS: Step[] = [
     href: "/tutorials/cockpit-team",
     desc: "Run an orchestrator, backend, and frontend as three panes in Cockpit — each its own folder and AGENTS.md, talking over the remote-pi mesh.",
   },
-  {
-    star: true,
-    tag: "extra",
-    title: "Claude in the mesh",
-    href: "/tutorials/claude-mesh",
-    desc: "Put Claude Code on the agent mesh next to Pi — advanced, terminal-only (not in the app yet).",
-  },
 ];
 
 function StepCard({ s }: { s: Step }) {

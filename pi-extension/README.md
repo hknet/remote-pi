@@ -95,7 +95,7 @@ current turn, and receive any later reply through the inbox/turn flow with
 
 Peers on the same machine talk over a Unix domain socket at
 `~/.pi/remote/sessions/<session-name>/broker.sock`. When sibling PCs are paired,
-a leader-capable Extension or MCP participant bridges the opaque cross-PC
+a leader-capable Extension bridges the opaque cross-PC
 addresses over the relay; local-only use stays on UDS when relay access is off.
 Useful for splitting work across roles (`backend`, `frontend`, `tests`,
 `orchestrator`, …) and letting them coordinate.
@@ -173,7 +173,9 @@ messages are unaffected.
 
 ## Install
 
-Requirements: Node 22.19+, Pi 0.84.3+ (the host coding agent).
+Requirements: Node 22.19+, Pi 0.84.4+ (the host coding agent). Pi 0.84.4 fixes
+extension-message ordering, preventing asynchronous relay and mesh events from
+corrupting provider replay history during tool execution.
 
 Remote Pi's Pi extension uses Pi's SDK, TUI, and `typebox` as optional peer
 dependencies, so it runs against the host Pi release instead of shipping a
@@ -277,7 +279,7 @@ forwarding, the Relay currently permits a route when any correctly signed Owner
 blob lists both canonical Pi keys. That does not prove the Owner paired with or
 controls either Pi.
 
-### Upgrade order (Relay first, then Extension/MCP participants)
+### Upgrade order (Relay first, then Extensions)
 
 Upgrade the **Relay first**: an old Extension can consume the new Relay's UUID
 errors. Current releases retain a narrow legacy wire-label shim, so mixed
@@ -285,7 +287,7 @@ new/old Extensions interoperate when both select the same unique colon-free
 signed nickname label, or when neither has one and both use the canonical
 standard-padded key prefix. Delimiter or collision cases, like divergent
 nickname views, are unsupported and may be silently dropped by the old
-receiver. Upgrade all Extension/MCP participants in one maintenance window.
+receiver. Upgrade all Extensions in one maintenance window.
 The shim does not replace the receiver-local aliases returned by `list_peers`;
 addresses remain opaque.
 
@@ -420,21 +422,6 @@ Useful commands:
 Name collisions inside a session get a numeric suffix automatically
 (`backend`, `backend#2`, `backend#3`). The broker assigns it and returns the
 real name to the peer.
-
-### Claude Code mesh launcher
-
-When the package is globally installed, `remote-pi claude [cwd] [claude-flags…]`
-starts a Claude Code session connected to the same agent mesh. It supplies a
-temporary MCP configuration for the Remote Pi mesh server and injects the
-agent-network protocol for that one session; it does not persist an MCP entry,
-so a normal `claude` launch is unaffected.
-
-It forwards any trailing Claude flags (for example `--resume` or `-c`). The
-launcher currently passes Claude's `--dangerously-skip-permissions` flag and
-enables the local development channel used for immediate mesh-message wakeups.
-Use it only in a workspace where automatic tool approval is appropriate.
-
----
 
 ## Command reference
 

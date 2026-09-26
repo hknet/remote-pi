@@ -5,6 +5,17 @@ allowBuilds:
   koffi: true
   protobufjs: true
 
+# Intentionally admit this exact Pi release before the minimum-age gate: its
+# extension-message ordering repair is required by Remote Pi's async events.
+minimumReleaseAgeExclude:
+  - '@earendil-works/pi-agent-core@0.84.4'
+  - '@earendil-works/pi-ai@0.84.4'
+  - '@earendil-works/pi-client@0.84.4'
+  - '@earendil-works/pi-coding-agent@0.84.4'
+  - '@earendil-works/pi-protocol@0.84.4'
+  - '@earendil-works/pi-telemetry@0.84.4'
+  - '@earendil-works/pi-tui@0.84.4'
+
 # Keep transitive packages above known vulnerable ranges until upstreams
 # release dependency updates that naturally resolve these versions.
 overrides:
@@ -17,5 +28,6 @@ overrides:
   nanoid: ^3.3.18
   postcss: ^8.5.23
   protobufjs: ^7.6.5
+  qs: ^6.16.0
   vite: ^8.0.16
   ws: ^8.21.3

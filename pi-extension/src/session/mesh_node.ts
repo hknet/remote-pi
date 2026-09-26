@@ -24,7 +24,7 @@ import { toWebSocketUrl } from "../config.js";
  * role, Relay, Broker, or bridge publication lifecycle.
  */
 
-/** Self-managed-relay bridge config (MCP path). */
+/** Configuration for a self-managed relay bridge. */
 export interface MeshSelfRelayBridge {
   /** Relay URL in http(s):// form (converted to ws(s):// internally). */
   relayUrl: string;

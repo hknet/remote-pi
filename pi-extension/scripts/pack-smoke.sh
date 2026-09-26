@@ -90,14 +90,4 @@ run_pi_smoke "$pkg/dist/extension.js" "$scratch/pi-raw-extension.out"
 
 package_name="$(node -p "require('$pkg/package.json').name")"
 version="$(node -p "require('$pkg/package.json').version")"
-set +e
-printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"pack-smoke","version":"1.0.0"}}}' \
-  | HOME="$scratch/home" XDG_CONFIG_HOME="$scratch/config" XDG_DATA_HOME="$scratch/data" \
-    node "$root/scripts/run-with-timeout.mjs" 12 node "$pkg/dist/mcp/mesh_server.js" --cwd "$scratch/work" --no-bridge \
-    > "$scratch/mcp.out" 2> "$scratch/mcp.err"
-mcp_status=$?
-set -e
-[ "$mcp_status" -eq 0 ] || [ "$mcp_status" -eq 124 ] || exit "$mcp_status"
-grep -Fq "\"version\":\"$version\"" "$scratch/mcp.out"
-
 echo "packed artifact smoke test passed ($package_name@$version)"
