@@ -213,6 +213,14 @@ type ReceivedImageDetails = {
   reason?: string;
 };
 
+type PairCodeDetails = {
+  uri: string;
+  token: string;
+  expiresAt: number;
+  roomId: string;
+  name: string;
+};
+
 const IMAGE_PREVIEW_MIME = "image/png";
 const IMAGE_CACHE_PREFIX = "pi-app-";
 type ReceivedImagePreviewDelivery = "immediate" | "defer";
@@ -635,6 +643,37 @@ function _registerReceivedImageRenderer(pi: ExtensionAPI): void {
   );
 }
 
+function _registerPairCodeRenderer(pi: ExtensionAPI): void {
+  const { Box, Text } = _requirePiRuntime();
+  pi.registerMessageRenderer<PairCodeDetails>(
+    REMOTE_PI_PAIR_CODE_TYPE,
+    (message, _options, theme) => {
+      const details = (message.details ?? {}) as Partial<PairCodeDetails>;
+      const uri = typeof details.uri === "string" ? details.uri : "";
+      if (!uri) return undefined;
+
+      const lines = [
+        theme.fg("customMessageLabel", "📱 Scan to pair:"),
+        "",
+        renderQRAscii(uri).trimEnd(),
+        "",
+        theme.fg("customMessageText", "📋 Or copy this pairing code (camera-less devices):"),
+        theme.fg("customMessageText", uri),
+      ];
+      if (typeof details.expiresAt === "number") {
+        lines.push(theme.fg(
+          "customMessageText",
+          `Valid until ${new Date(details.expiresAt).toLocaleTimeString()}`,
+        ));
+      }
+
+      const block = new Box(1, 1, (line) => theme.bg("customMessageBg", line));
+      block.addChild(new Text(lines.join("\n")));
+      return block;
+    },
+  );
+}
+
 function _isReceivedImageContextMessage(message: unknown): boolean {
   return typeof message === "object"
     && message !== null
@@ -643,16 +682,24 @@ function _isReceivedImageContextMessage(message: unknown): boolean {
 }
 
 /**
- * Pair codes deliberately remain `pi.sendMessage` entries so Cockpit can read
- * their structured payload, but the QR URI includes a single-use pairing token
- * and must never reach a provider or compaction summary. Match only this exact
- * type: other user-visible `remote-pi:*` messages remain model context.
+ * Pair codes remain `pi.sendMessage` entries so host UIs can read their
+ * structured payload. The QR URI and token live only in `details`; the custom
+ * TUI renderer displays them, while Pi 1.4's `convertToLlm` converts only the
+ * message `content`. Match this exact type in model/compaction filters too:
+ * other user-visible `remote-pi:*` messages remain model context.
  */
 function _isPairCodeContextMessage(message: unknown): boolean {
   return typeof message === "object"
     && message !== null
     && (message as { role?: unknown }).role === "custom"
     && (message as { customType?: unknown }).customType === REMOTE_PI_PAIR_CODE_TYPE;
+}
+
+function _isPairCodeContextEntry(entry: unknown): boolean {
+  return typeof entry === "object"
+    && entry !== null
+    && (entry as { type?: unknown }).type === "custom_message"
+    && (entry as { customType?: unknown }).customType === REMOTE_PI_PAIR_CODE_TYPE;
 }
 
 /**
@@ -2098,6 +2145,7 @@ function _registerPiRuntimeFeatures(pi: ExtensionAPI): void {
   const { Type } = _requirePiRuntime();
   registerAgentTools(pi, () => _meshNode?.peer() ?? null, Type);
   _registerReceivedImageRenderer(pi);
+  _registerPairCodeRenderer(pi);
 }
 
 const extension: ExtensionFactory = (pi: ExtensionAPI): void => {
@@ -2130,12 +2178,21 @@ const extension: ExtensionFactory = (pi: ExtensionAPI): void => {
   pi.on("resources_discover", () => ({ skillPaths: [skillsDir()] }));
 
   // Local-only image previews and pairing codes are persisted custom messages,
-  // but must not become user-role LLM context. Pair codes remain emitted via
-  // pi.sendMessage for Cockpit; the actual Android image reaches the model via
-  // the paired sendUserMessage call.
+  // but must never enter model context. Pair-code secrets live only in message
+  // details (Pi's convertToLlm ignores details), and the exact type is filtered
+  // from provider requests, compaction, and branch summaries below. The actual
+  // Android image reaches the model via the paired sendUserMessage call.
   pi.on("context", (event) => ({
     messages: _filterInternalMessagesFromContext(event.messages),
   }));
+  pi.on("session_before_tree", (event) => {
+    // AgentSession keeps the original array reference after emitting this
+    // mutable preparation event, so splice in place rather than replace it.
+    const entries = event.preparation.entriesToSummarize;
+    for (let i = entries.length - 1; i >= 0; i -= 1) {
+      if (_isPairCodeContextEntry(entries[i])) entries.splice(i, 1);
+    }
+  });
 
   // Tool calls execute without prompting the remote user. The Pi SDK has no
   // native `requiresApproval` per tool, and a hardcoded gate (Bash/Edit/Write)
@@ -3140,8 +3197,22 @@ async function _cmdStart(ctx: Pick<ExtensionContext, "ui" | "cwd">): Promise<voi
  * device is **added** to `_activePeers` after scanning, while existing
  * owners keep their session.
  */
-async function _cmdPair(ctx: Pick<ExtensionContext, "ui" | "cwd">, args = ""): Promise<void> {
-  const cwd = "cwd" in ctx ? (ctx as ExtensionCommandContext).cwd : "";
+async function _cmdPair(ctx: Pick<ExtensionContext, "ui" | "cwd" | "isIdle">, args = ""): Promise<void> {
+  const warnBusy = (): void => {
+    ctx.ui.notify(
+      "[remote-pi] Pi is busy (model or tool run active). Wait for the model and tools to finish, then run /remote-pi pair again.",
+      "warning",
+    );
+  };
+  // Extension commands run immediately even during streaming. Refuse before
+  // auto-start or token issuance so this attempt neither disturbs the active
+  // run nor invalidates a QR the user may already be scanning.
+  if (!ctx.isIdle()) {
+    warnBusy();
+    return;
+  }
+
+  const cwd = ctx.cwd;
 
   // Auto-bootstrap when services are down. Before this, `/remote-pi pair`
   // on a fresh terminal forced the user to call `/remote-pi` first — every
@@ -3161,8 +3232,27 @@ async function _cmdPair(ctx: Pick<ExtensionContext, "ui" | "cwd">, args = ""): P
       return;
     }
     ctx.ui.notify("[remote-pi] Starting mesh + relay before pairing…", "info");
-    if (!_meshNode) await _cmdJoin(ctx);
-    if (_state === "idle") await _cmdStart(ctx);
+    if (!_meshNode) {
+      await _cmdJoin(ctx);
+      if (!ctx.isIdle()) {
+        warnBusy();
+        return;
+      }
+    }
+    if (_state === "idle") {
+      await _cmdStart(ctx);
+      if (!ctx.isIdle()) {
+        warnBusy();
+        return;
+      }
+    }
+  }
+
+  // Recheck after any awaited preparation and immediately before issuing a
+  // token; never queue a pairing message into an active model/tool run.
+  if (!ctx.isIdle()) {
+    warnBusy();
+    return;
   }
 
   // Relay must be up — the QR carries a token the app exchanges through
@@ -3189,26 +3279,18 @@ async function _cmdPair(ctx: Pick<ExtensionContext, "ui" | "cwd">, args = ""): P
   const { token, expiresAt } = qrSession.issueToken(ttlMs);
   const roomId = _myRoomId ?? roomIdFor(cwd, sessionName);
   const qrUri = buildQRUri(token, edKp.publicKey, sessionName, roomId);
-  // Render both the QR ASCII and the copy-paste URI inside the Pi TUI's
-  // chat panel via `pi.sendMessage` — the same channel the SDK uses for
-  // agent responses + tool results. `process.stderr.write` (the old QR
-  // path via `displayQR`) broke the TUI layout because it bypassed the
-  // chat widget and bled into the prompt area. qrcode-terminal v0.12
-  // small mode is pure Unicode (█ ▀ ▄ space, no ANSI escapes — see
-  // `lib/main.js:48-53`), so embedding the ASCII inside a sendMessage
-  // content string renders correctly without raw escape bytes.
+  // Keep the URI/token out of custom-message `content`: Pi's provider,
+  // virtual-model routing, and summary paths convert `content` to LLM messages
+  // but ignore `details`. The Pi TUI renderer below and host UIs can still
+  // display the structured payload. `triggerTurn: false` is also essential:
+  // pairing must never start a model request.
   if (_pi) {
-    const qrAscii = renderQRAscii(qrUri);
     _pi.sendMessage({
       customType: REMOTE_PI_PAIR_CODE_TYPE,
-      content:
-        `📱 Scan to pair:\n\n${qrAscii}\n` +
-        `📋 Or copy this pairing code (camera-less devices):\n\n${qrUri}`,
-      // Structured payload for RPC clients (e.g. Cockpit): render their own QR
-      // from `uri` + show the expiry, without scraping the display string.
+      content: "📱 Pairing QR ready.",
       details: { uri: qrUri, token, expiresAt, roomId, name: sessionName },
       display: true,
-    });
+    }, { triggerTurn: false });
   }
 
   ctx.ui.notify(

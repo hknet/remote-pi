@@ -261,7 +261,7 @@ function makeMockPi(): { pi: ExtensionAPI; registeredCommands: string[] } {
 }
 
 function makeMockCtx(cwd = "/home/user/projects/remote_pi") {
-  return { ui: { notify: vi.fn() }, cwd, abort: vi.fn() };
+  return { ui: { notify: vi.fn() }, cwd, abort: vi.fn(), isIdle: vi.fn(() => true) };
 }
 
 function deferred<T>(): {
@@ -434,6 +434,150 @@ describe("state machine + pair_request flow", () => {
     captureHandler("remote-pi");
     await _connectForTest(makeMockCtx());
     expect(_getState()).toBe("started");
+  });
+
+  test("/remote-pi pair refuses while model/tools are active, then succeeds on an idle retry", async () => {
+    captureHandler("remote-pi");
+    await _connectForTest(makeMockCtx());
+    expect(_getState()).toBe("started");
+
+    const pair = captureHandler("remote-pi pair");
+    const sendMessage = vi.fn();
+    _setPiForTest({ sendMessage, sendUserMessage: () => undefined });
+    const qr = await import("./pairing/qr.js");
+    const issueToken = qr.qrSession.issueToken as ReturnType<typeof vi.fn>;
+    issueToken.mockClear();
+
+    const busyCtx = makeMockCtx();
+    busyCtx.isIdle.mockReturnValue(false);
+    await pair("", busyCtx);
+
+    expect(busyCtx.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("Wait for the model and tools to finish"),
+      "warning",
+    );
+    expect(issueToken).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(_getState()).toBe("started");
+
+    const idleCtx = makeMockCtx();
+    await pair("", idleCtx);
+    expect(issueToken).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ customType: "remote-pi:pair-code" }),
+      { triggerTurn: false },
+    );
+    expect(idleCtx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("QR ready"), "info");
+  });
+
+  test("/remote-pi pair rechecks idleness immediately before issuing a QR", async () => {
+    captureHandler("remote-pi");
+    await _connectForTest(makeMockCtx());
+
+    const pair = captureHandler("remote-pi pair");
+    const sendMessage = vi.fn();
+    _setPiForTest({ sendMessage, sendUserMessage: () => undefined });
+    const qr = await import("./pairing/qr.js");
+    const issueToken = qr.qrSession.issueToken as ReturnType<typeof vi.fn>;
+    issueToken.mockClear();
+
+    const ctx = makeMockCtx();
+    ctx.isIdle.mockReturnValueOnce(true).mockReturnValueOnce(false);
+    await pair("", ctx);
+
+    expect(ctx.isIdle).toHaveBeenCalledTimes(2);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("Wait for the model and tools to finish"),
+      "warning",
+    );
+    expect(issueToken).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("busy pair refusal preserves an already-issued pairing token", async () => {
+    captureHandler("remote-pi");
+    await _connectForTest(makeMockCtx());
+
+    const pair = captureHandler("remote-pi pair");
+    const qr = await import("./pairing/qr.js");
+    const activeSession = new qr.QRSession();
+    const existing = activeSession.issueToken();
+    const issueToken = qr.qrSession.issueToken as ReturnType<typeof vi.fn>;
+    const consumeToken = qr.qrSession.consumeToken as ReturnType<typeof vi.fn>;
+    issueToken.mockImplementation(activeSession.issueToken.bind(activeSession));
+    consumeToken.mockImplementation(activeSession.consumeToken.bind(activeSession));
+    issueToken.mockClear();
+
+    try {
+      const ctx = makeMockCtx();
+      ctx.isIdle.mockReturnValue(false);
+      await pair("", ctx);
+
+      expect(issueToken).not.toHaveBeenCalled();
+      expect(consumeToken(existing.token)).toBe("ok");
+      expect(ctx.ui.notify).toHaveBeenCalledWith(
+        expect.stringContaining("Wait for the model and tools to finish"),
+        "warning",
+      );
+    } finally {
+      issueToken.mockReturnValue({ token: "test-token", expiresAt: Date.now() + 60_000 });
+      consumeToken.mockImplementation((token: string) => {
+        _consumeCalls.push(token);
+        return _tokenStatus;
+      });
+    }
+  });
+
+  test("busy transition during deferred startup stops before relay startup and token issuance", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "pi-ext-busy-pair-startup-"));
+    const configPath = join(cwd, ".pi", "remote-pi", "config.json");
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(configPath, JSON.stringify({ agent_name: "busy-pair-startup" }));
+
+    const joinGate = deferred<string>();
+    const joinStarted = deferred<void>();
+    const meshNodeModule = await import("./session/mesh_node.js");
+    const connectSpy = vi.spyOn(meshNodeModule.MeshNode.prototype, "connect")
+      .mockImplementation(() => {
+        joinStarted.resolve();
+        return joinGate.promise;
+      });
+    const closeSpy = vi.spyOn(meshNodeModule.MeshNode.prototype, "close")
+      .mockResolvedValue(undefined);
+
+    try {
+      const pair = captureHandler("remote-pi pair");
+      const sendMessage = vi.fn();
+      _setPiForTest({ sendMessage, sendUserMessage: () => undefined });
+      const qr = await import("./pairing/qr.js");
+      const issueToken = qr.qrSession.issueToken as ReturnType<typeof vi.fn>;
+      issueToken.mockClear();
+
+      const ctx = makeMockCtx(cwd);
+      const pairing = pair("", ctx);
+      await joinStarted.promise;
+      ctx.isIdle.mockReturnValue(false);
+      joinGate.resolve("busy-pair-startup");
+      await pairing;
+
+      expect(ctx.isIdle).toHaveBeenCalledTimes(2);
+      expect(ctx.ui.notify).toHaveBeenCalledWith(
+        expect.stringContaining("Wait for the model and tools to finish"),
+        "warning",
+      );
+      expect(_getState()).toBe("idle");
+      expect(issueToken).not.toHaveBeenCalled();
+      expect(sendMessage.mock.calls.some(([message]) =>
+        (message as { customType?: string }).customType === "remote-pi:pair-code",
+      )).toBe(false);
+    } finally {
+      joinGate.resolve("busy-pair-startup");
+      const stop = captureHandler("remote-pi stop");
+      await stop("", makeMockCtx(cwd));
+      connectSpy.mockRestore();
+      closeSpy.mockRestore();
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 
   test("pair without start → warning, state stays idle", async () => {
@@ -1125,7 +1269,7 @@ function captureEventHarness(): {
   };
 }
 
-function captureMessageRenderer(): {
+function captureMessageRenderer(expectedType = "remote-pi:received-image"): {
   getRenderer(): (message: { details?: unknown }, options: unknown, theme: unknown) => unknown;
 } {
   let renderer: ((message: { details?: unknown }, options: unknown, theme: unknown) => unknown) | undefined;
@@ -1135,7 +1279,7 @@ function captureMessageRenderer(): {
     registerTool: () => undefined, registerShortcut: () => undefined,
     registerFlag: () => undefined, getFlag: () => undefined,
     registerMessageRenderer(type: string, callback: unknown) {
-      if (type === "remote-pi:received-image") {
+      if (type === expectedType) {
         renderer = callback as (message: { details?: unknown }, options: unknown, theme: unknown) => unknown;
       }
     },
@@ -1143,10 +1287,10 @@ function captureMessageRenderer(): {
     sendUserMessage: () => undefined,
   } as unknown as ExtensionAPI;
   (extension as ExtensionFactory)(pi);
-  if (!renderer) throw new Error("custom image renderer not registered");
+  if (!renderer) throw new Error(`${expectedType} renderer not registered`);
   return {
     getRenderer(): (message: { details?: unknown }, options: unknown, theme: unknown) => unknown {
-      if (!renderer) throw new Error("custom image renderer not registered");
+      if (!renderer) throw new Error(`${expectedType} renderer not registered`);
       return renderer;
     },
   };
@@ -1246,12 +1390,12 @@ describe("multi-channel broadcast (W2D)", () => {
     rmSync(cwd, { recursive: true, force: true });
   });
 
-  test("/remote-pi pair emits a user-visible pair-code for Cockpit even when an owner is already attached", async () => {
+  test("/remote-pi pair emits a visible pair-code and keeps its QR payload out of model context", async () => {
     await _pairForTest("ownerA__1234567890");
     expect(_getActivePeerCountForTest()).toBe(1);
 
-    // Keep the structured pi.sendMessage event: Cockpit consumes it to render
-    // the QR instead of scraping the TUI text.
+    // Keep the structured pi.sendMessage event for host UIs to render the QR
+    // without scraping the TUI text.
     const pair = captureHandler("remote-pi pair");
     const sendMessage = vi.fn();
     _setPiForTest({ sendMessage, sendUserMessage: () => undefined });
@@ -1259,13 +1403,111 @@ describe("multi-channel broadcast (W2D)", () => {
     await pair("", ctx);
 
     const pairCode = sendMessage.mock.calls
-      .map(([message]) => message as { customType?: string; display?: boolean; details?: { uri?: string; token?: string } })
+      .map(([message]) => message as {
+        customType?: string;
+        content?: string;
+        display?: boolean;
+        details?: { uri?: string; token?: string; expiresAt?: number; roomId?: string; name?: string };
+      })
       .find((message) => message.customType === "remote-pi:pair-code");
     expect(pairCode).toMatchObject({
       customType: "remote-pi:pair-code",
       display: true,
+      content: "📱 Pairing QR ready.",
       details: { uri: expect.stringMatching(/^remotepi:\/\/pair\?/), token: "test-token" },
     });
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ customType: "remote-pi:pair-code", display: true }),
+      { triggerTurn: false },
+    );
+
+    // Exercise the exact message emitted above through Pi's provider-context
+    // and compaction filters; neither its URI nor the single-use token may leak.
+    const pairCodeMessage = { role: "custom" as const, ...pairCode! };
+    const emittedUri = pairCode!.details!.uri!;
+    const emittedToken = pairCode!.details!.token!;
+    const qr = await import("./pairing/qr.js");
+    const qrAscii = qr.renderQRAscii(emittedUri);
+    expect(pairCode!.content).not.toContain(emittedUri);
+    expect(pairCode!.content).not.toContain(emittedToken);
+    expect(pairCode!.content).not.toContain(qrAscii);
+
+    // Pi 1.4's actual message converter is used by virtual-model routing,
+    // branch summaries, and bug-report summaries. It must see only safe
+    // content, never the QR URI/token stored in structured details.
+    const { convertToLlm, prepareBranchEntries, serializeConversation } =
+      await import("@earendil-works/pi-coding-agent");
+    const converted = convertToLlm([{
+      ...pairCodeMessage,
+      timestamp: Date.now(),
+    } as Parameters<typeof convertToLlm>[0][number]]);
+    const convertedText = serializeConversation(converted);
+    expect(convertedText).toContain("Pairing QR ready.");
+    expect(convertedText).not.toContain(emittedUri);
+    expect(convertedText).not.toContain(emittedToken);
+    expect(convertedText).not.toContain(qrAscii);
+
+    const onContext = captureEventHandler("context");
+    const contextResult = onContext({
+      type: "context",
+      messages: [pairCodeMessage, { role: "user", content: "hello" }],
+    }) as { messages?: unknown[] };
+    expect(contextResult.messages).toEqual([{ role: "user", content: "hello" }]);
+    expect(JSON.stringify(contextResult)).not.toContain("test-token");
+
+    const onBeforeCompact = captureEventHandler("session_before_compact");
+    const preparation = {
+      messagesToSummarize: [pairCodeMessage],
+      turnPrefixMessages: [pairCodeMessage],
+    };
+    onBeforeCompact({
+      type: "session_before_compact",
+      preparation,
+      branchEntries: [],
+      reason: "manual",
+      willRetry: false,
+      signal: new AbortController().signal,
+    });
+    expect(preparation.messagesToSummarize).toEqual([]);
+    expect(preparation.turnPrefixMessages).toEqual([]);
+
+    const pairCodeEntry = {
+      id: "pair-code-entry",
+      parentId: null,
+      type: "custom_message" as const,
+      customType: "remote-pi:pair-code",
+      content: pairCode!.content!,
+      details: pairCode!.details,
+      display: true,
+      timestamp: new Date().toISOString(),
+    };
+    const safeEntry = {
+      id: "safe-custom-entry",
+      parentId: null,
+      type: "custom_message" as const,
+      customType: "remote-pi:mesh-message",
+      content: "safe message remains available to summaries",
+      display: true,
+      timestamp: new Date().toISOString(),
+    };
+    const treePreparation = { entriesToSummarize: [pairCodeEntry, safeEntry] };
+    const originalTreeEntries = treePreparation.entriesToSummarize;
+    const onBeforeTree = captureEventHandler("session_before_tree");
+    onBeforeTree({
+      type: "session_before_tree",
+      preparation: treePreparation,
+      signal: new AbortController().signal,
+    });
+    expect(treePreparation.entriesToSummarize).toBe(originalTreeEntries);
+    expect(originalTreeEntries).toEqual([safeEntry]);
+    const branchMessages = prepareBranchEntries(
+      originalTreeEntries as Parameters<typeof prepareBranchEntries>[0],
+    ).messages;
+    const branchText = serializeConversation(convertToLlm(branchMessages));
+    expect(branchText).toContain("safe message remains available to summaries");
+    expect(branchText).not.toContain(emittedUri);
+    expect(branchText).not.toContain(emittedToken);
+    expect(branchText).not.toContain(qrAscii);
 
     // Should have notified about a QR being ready, not warned about
     // an existing pairing.
@@ -1838,6 +2080,30 @@ describe("multi-channel broadcast (W2D)", () => {
     });
     expect(preparation.messagesToSummarize).toEqual([keepUser]);
     expect(preparation.turnPrefixMessages).toEqual([keepCustom]);
+  });
+
+  test("registers the pair-code renderer and displays QR details outside message content", async () => {
+    const { getRenderer } = captureMessageRenderer("remote-pi:pair-code");
+    const theme = {
+      fg: (token: string, text: string) => `${token}:${text}`,
+      bg: (token: string, text: string) => `${token}:${text}`,
+    };
+    const uri = "remotepi://pair?t=test-token&epk=public-key&n=renderer-test";
+    const qr = await import("./pairing/qr.js");
+    const qrAscii = qr.renderQRAscii(uri);
+    const message = {
+      customType: "remote-pi:pair-code",
+      content: "📱 Pairing QR ready.",
+      display: true,
+      details: { uri, token: "test-token", expiresAt: Date.now() + 60_000, roomId: "room", name: "test" },
+    };
+
+    const component = getRenderer()(message, { expanded: false }, theme);
+    const rendered = (component as { render: (width: number) => string[] }).render(120).join("\n");
+    expect(rendered).toContain("📱 Scan to pair:");
+    expect(rendered).toContain("📋 Or copy this pairing code");
+    expect(rendered).toContain(uri);
+    expect(rendered).toContain(qrAscii.trimEnd().split("\n")[0]!.trim());
   });
 
   test("registers and uses remote-pi image renderer with Saved fallback", () => {

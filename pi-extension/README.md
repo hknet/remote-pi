@@ -173,9 +173,7 @@ messages are unaffected.
 
 ## Install
 
-Requirements: Node 22.19+, Pi 0.84.4+ (the host coding agent). Pi 0.84.4 fixes
-extension-message ordering, preventing asynchronous relay and mesh events from
-corrupting provider replay history during tool execution.
+Requirements: Node 22.19+, Pi 1.4.0+ (the host coding agent).
 
 Remote Pi's Pi extension uses Pi's SDK, TUI, and `typebox` as optional peer
 dependencies, so it runs against the host Pi release instead of shipping a
@@ -260,10 +258,14 @@ The shortid is the first 8 chars shown by `devices`.
 ### Pair-code privacy
 
 The QR URI contains a single-use, expiring pairing token. `/remote-pi pair`
-keeps its `remote-pi:pair-code` custom message in Pi's session stream so
-Cockpit can render the structured QR payload, but removes that exact message
-from provider and compaction contexts. This is deliberately narrow: it does
-not generally filter user-visible `remote-pi:*` messages from model context.
+keeps a `remote-pi:pair-code` custom message in Pi's session stream for the
+user and host UI, but its model-facing `content` is only the safe text
+`Pairing QR ready.` The URI/token are held in structured `details` and rendered
+by the Pi TUI/host UI; Pi 1.4's `convertToLlm` uses `content`, not `details`.
+The command also does not trigger a model turn, and the exact pair-code message
+is excluded from provider context, compaction inputs, and branch summaries.
+This is deliberately narrow: it does not generally filter user-visible
+`remote-pi:*` messages from model context.
 
 **Credit:** Context-isolation fix contributed by **Harald Kapper**
 (<hk@kapper.net>) of [KAPPER NETWORK-COMMUNICATIONS GmbH](https://kapper.net).
